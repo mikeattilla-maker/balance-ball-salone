@@ -1,9 +1,575 @@
-<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><meta name="theme-color" content="#143f34"><title>Balance Ball | Salone Edition</title><style>*{box-sizing:border-box}body{margin:0;background:#102d28;color:white;font-family:system-ui,Arial;overflow:hidden}canvas{display:block;width:100vw;height:100dvh;touch-action:none}#hud{position:fixed;top:10px;left:12px;right:12px;display:flex;justify-content:space-between;gap:8px;pointer-events:none;font-weight:800;text-shadow:0 2px 4px #000;background:#153c3488;padding:9px;border-radius:10px;font-size:clamp(12px,2.5vw,17px)}#panel{position:fixed;inset:0;display:grid;place-items:center;background:#071d18a8;padding:20px}#panel.hidden{display:none}.sheet{background:#164a3e;border:2px solid #f5ce73;border-radius:20px;padding:25px;max-width:420px;text-align:center;box-shadow:0 15px 40px #0008}h1{font-size:clamp(30px,7vw,48px);margin:0;color:#ffd67b}p{line-height:1.5}button{border:0;border-radius:12px;background:#f9c852;color:#16372e;font-weight:900;padding:14px 24px;font-size:18px;cursor:pointer}#controls{position:fixed;bottom:20px;left:20px;right:20px;display:flex;justify-content:space-between;pointer-events:none}#pad{width:140px;height:140px;border:3px solid #fff7;border-radius:50%;background:#fff2;position:relative;pointer-events:auto;touch-action:none}#nub{position:absolute;width:52px;height:52px;left:41px;top:41px;background:#ffe2a0a8;border-radius:50%;border:2px solid #fff8}#dodge{align-self:end;pointer-events:auto;border-radius:50%;width:94px;height:94px;padding:0;font-size:15px;touch-action:none}@media(hover:hover) and (pointer:fine){#controls{opacity:.45}}</style><canvas id="game"></canvas><div id="hud"><span id="team">TEAM A · 3 LEFT</span><span id="score">SURVIVAL 0.0s</span><span id="round">ROUND 1</span></div><div id="controls"><div id="pad"><div id="nub"></div></div><button id="dodge">DODGE</button></div><div id="panel"><div class="sheet"><h1>BALANCE BALL</h1><h2>🇸🇱 SALONE EDITION</h2><p>One ball. Two throwers. Three teammates.<br>Stay in the middle and dodge the ball. When you're hit, the next teammate steps in!</p><p><small>WASD / arrow keys or touch joystick · Space / DODGE for a quick dash</small></p><button id="start">PLAY NOW</button><p><small>Prototype v0.2 · Team Survival</small></p></div></div><script>
-const c=document.querySelector('canvas'),ctx=c.getContext('2d');let W,H,D=1;function resize(){D=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;c.width=W*D;c.height=H*D;ctx.setTransform(D,0,0,D,0,0)}addEventListener('resize',resize);resize();
-const $=id=>document.getElementById(id);let state='menu',team=0,players=3,elapsed=0,total=0,round=1,ball=null,thrower=0,cool=1.1,inv=0,dash=0,last=performance.now(),keys={},stick={x:0,y:0},p={x:0,y:0};
-function bounds(){let w=Math.min(W*.76,760),h=Math.min(H*.68,520);return{x:(W-w)/2,y:(H-h)/2+12,w,h}}function resetPlayer(){p.x=W/2;p.y=H/2;inv=.9;dash=0;ball=null;cool=1.1}function start(){state='play';team=0;players=3;round=1;total=0;elapsed=0;resetPlayer();$('panel').classList.add('hidden')}function gameOver(){state='between';$('panel').classList.remove('hidden');$('panel').querySelector('h1').textContent='TEAM ELIMINATED';$('panel').querySelector('h2').textContent='SURVIVED '+total.toFixed(1)+' SECONDS';$('panel').querySelector('p').innerHTML='All three players are out. Next team steps into the middle!';$('start').textContent='NEXT TEAM';$('start').onclick=()=>{team++;round++;players=3;elapsed=0;total=0;resetPlayer();state='play';$('panel').classList.add('hidden')}}$('start').onclick=start;
-function dodge(){if(state==='play'&&dash<=0){dash=.27;inv=Math.max(inv,.27)}}$('dodge').addEventListener('pointerdown',e=>{e.preventDefault();dodge()});addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if(e.key===' '){e.preventDefault();dodge()}});addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);const pad=$('pad'),nub=$('nub');function padMove(e){let r=pad.getBoundingClientRect(),x=e.clientX-r.left-r.width/2,y=e.clientY-r.top-r.height/2,l=Math.hypot(x,y)||1,s=Math.min(1,58/l);stick.x=x/l*Math.min(l/58,1);stick.y=y/l*Math.min(l/58,1);nub.style.transform=`translate(${x*s}px,${y*s}px)`}pad.addEventListener('pointerdown',e=>{pad.setPointerCapture(e.pointerId);padMove(e)});pad.addEventListener('pointermove',e=>{if(pad.hasPointerCapture(e.pointerId))padMove(e)});function release(){stick.x=stick.y=0;nub.style.transform='translate(0,0)'}pad.addEventListener('pointerup',release);pad.addEventListener('pointercancel',release);
-function ellipse(x,y,rx,ry,color){ctx.fillStyle=color;ctx.beginPath();ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2);ctx.fill()}function person(x,y,color,scale=1){ellipse(x+4,y+14*scale,14*scale,5*scale,'#0003');ctx.fillStyle=color;ctx.fillRect(x-9*scale,y-9*scale,18*scale,22*scale);ellipse(x,y-15*scale,9*scale,10*scale,'#7c4a2b');ellipse(x,y-21*scale,9*scale,4*scale,'#24170f');ctx.fillStyle='#2a2521';ctx.fillRect(x-8*scale,y+12*scale,6*scale,10*scale);ctx.fillRect(x+3*scale,y+12*scale,6*scale,10*scale)}function draw(){let b=bounds();ctx.fillStyle='#89c8e5';ctx.fillRect(0,0,W,H);ctx.fillStyle='#edb97e';ctx.fillRect(0,H*.25,W,H*.75);let houses=['#e28c6f','#f3c16c','#6bada5','#e4a1b2','#d79d68','#8eb9cc'];for(let i=0;i<7;i++){let x=i*W/6-W/15,w=W/5,h=H*.20+(i%3)*H*.025;ctx.fillStyle=houses[i%6];ctx.fillRect(x,H*.25-h,w,h);ctx.fillStyle='#443e37';for(let j=0;j<3;j++)ctx.fillRect(x+15+j*w/3,H*.25-h+15,Math.max(10,w/7),h*.20);ctx.fillStyle='#77553e';ctx.fillRect(x,H*.25-4,w,6)}ctx.fillStyle='#b98c60';ctx.fillRect(b.x,b.y,b.w,b.h);ctx.strokeStyle='#fff8';ctx.lineWidth=3;ctx.strokeRect(b.x,b.y,b.w,b.h);ctx.setLineDash([10,9]);ctx.beginPath();ctx.moveTo(W/2,b.y);ctx.lineTo(W/2,b.y+b.h);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#ffffff16';ctx.fillRect(b.x+15,b.y+15,b.w-30,b.h-30);person(b.x-22,H/2,'#a63636',1.15);person(b.x+b.w+22,H/2,'#a63636',1.15);for(let i=0;i<3;i++){ellipse(b.x+50+i*28,b.y+b.h+23,9,4,'#0003');ellipse(b.x+50+i*28,b.y+b.h+12,8,8,i<players?'#28966a':'#777')}if(inv<=0||Math.floor(performance.now()/100)%2===0)person(p.x,p.y,'#178b65',1.15);if(ball){ellipse(ball.x+4,ball.y+10,ball.r,ball.r*.45,'#0003');ellipse(ball.x,ball.y,ball.r,ball.r,'#f3e4b6');ctx.strokeStyle='#ad633c';ctx.lineWidth=2;ctx.beginPath();ctx.arc(ball.x,ball.y,ball.r*.65,0,Math.PI*1.4);ctx.stroke()}ctx.fillStyle='#fff';ctx.font='bold 12px system-ui';ctx.textAlign='center';ctx.fillText('DODGE ZONE',W/2,b.y+20)}
-function update(dt){if(state!=='play')return;let b=bounds();elapsed+=dt;total+=dt;inv=Math.max(0,inv-dt);dash=Math.max(0,dash-dt);let x=(keys.d||keys.arrowright?1:0)-(keys.a||keys.arrowleft?1:0)+stick.x,y=(keys.s||keys.arrowdown?1:0)-(keys.w||keys.arrowup?1:0)+stick.y,l=Math.hypot(x,y)||1,speed=(dash>0?510:240)*dt;p.x=Math.max(b.x+20,Math.min(b.x+b.w-20,p.x+x/l*speed));p.y=Math.max(b.y+30,Math.min(b.y+b.h-30,p.y+y/l*speed));cool-=dt;if(!ball&&cool<=0){let sx=thrower?b.x+b.w+20:b.x-20,sy=H/2;let dx=p.x-sx,dy=p.y-sy,dist=Math.hypot(dx,dy)||1,v=290+Math.min(170,elapsed*5);ball={x:sx,y:sy,vx:dx/dist*v,vy:dy/dist*v,r:11};thrower=1-thrower;cool=1.1}if(ball){ball.x+=ball.vx*dt;ball.y+=ball.vy*dt;if(inv<=0&&Math.hypot(ball.x-p.x,ball.y-(p.y-3))<ball.r+13){players--;resetPlayer();if(players<=0){gameOver()}}else if(ball.x<b.x-65||ball.x>b.x+b.w+65||ball.y<b.y-40||ball.y>b.y+b.h+40){ball=null;cool=.4}}$('team').textContent='TEAM '+String.fromCharCode(65+team%26)+' · '+players+' LEFT';$('score').textContent='SURVIVAL '+total.toFixed(1)+'s';$('round').textContent='ROUND '+round}
-function frame(t){let dt=Math.min(.035,(t-last)/1000);last=t;update(dt);draw();requestAnimationFrame(frame)}resetPlayer();requestAnimationFrame(frame);
-</script></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#143f34">
+  <title>Balance Ball | Salone Edition</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #102d28; color: white; font-family: system-ui, Arial; overflow: hidden; overscroll-behavior: none; }
+    canvas { display: block; width: 100vw; height: 100dvh; touch-action: none; }
+    button { border: 0; border-radius: 12px; background: #f9c852; color: #16372e; font-weight: 900; padding: 14px 24px; font-size: 18px; cursor: pointer; touch-action: manipulation; }
+    button:focus-visible, #pad:focus-visible { outline: 3px solid white; outline-offset: 4px; }
+    button:disabled { opacity: .55; cursor: default; }
+    [hidden] { display: none !important; }
+    #hud { position: fixed; top: max(10px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right)); display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 7px 8px; pointer-events: none; font-weight: 800; text-shadow: 0 2px 4px #000; background: #153c34dc; padding: 9px; border-radius: 10px; font-size: clamp(11px, 2.5vw, 17px); }
+    #team { border-left: 5px solid; padding-left: 6px; white-space: pre-line; }
+    #round { text-align: right; white-space: pre-line; }
+    #score { white-space: pre-line; }
+    #dash-status { color: #ffe2a0; }
+    #difficulty { font-size: clamp(11px, 2.5vw, 15px); }
+    #pause { justify-self: end; min-height: 44px; padding: 8px 14px; font-size: 13px; pointer-events: auto; }
+    #panel { position: fixed; inset: 0; z-index: 3; display: grid; place-items: center; background: #071d18c9; padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); overflow: auto; }
+    #panel.hidden { display: none; }
+    .sheet { background: #164a3e; border: 2px solid #f5ce73; border-radius: 20px; padding: 24px; width: min(100%, 420px); max-height: 100%; overflow: auto; text-align: center; box-shadow: 0 15px 40px #0008; }
+    h1 { font-size: clamp(28px, 7vw, 46px); margin: 0; color: #ffd67b; }
+    h2 { font-size: 21px; }
+    p { line-height: 1.5; }
+    .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+    #restart { background: #e5f0e8; font-size: 15px; }
+    #results { width: 100%; margin: 16px 0; border-collapse: collapse; font-size: 13px; }
+    #results caption { font-weight: 800; padding-bottom: 8px; }
+    #results th, #results td { padding: 8px 3px; border-bottom: 1px solid #ffffff40; text-align: right; }
+    #results th:first-child { text-align: left; }
+    #controls { position: fixed; bottom: max(20px, env(safe-area-inset-bottom)); left: max(20px, env(safe-area-inset-left)); right: max(20px, env(safe-area-inset-right)); display: flex; justify-content: space-between; align-items: end; pointer-events: none; user-select: none; -webkit-user-select: none; }
+    #pad { width: 140px; height: 140px; border: 3px solid #fff9; border-radius: 50%; background: #fff2; position: relative; pointer-events: auto; touch-action: none; }
+    #nub { position: absolute; width: 52px; height: 52px; left: calc(50% - 26px); top: calc(50% - 26px); background: #ffe2a0a8; border-radius: 50%; border: 2px solid #fff8; pointer-events: none; }
+    #dodge { pointer-events: auto; border-radius: 50%; width: 94px; height: 94px; padding: 0; font-size: 15px; touch-action: none; }
+    #feedback { position: fixed; top: 110px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 10px 16px; border: 2px solid #ffe2a0; border-radius: 12px; background: #8b302a; font-size: 18px; font-weight: 900; text-align: center; pointer-events: none; }
+    @media (hover: hover) and (pointer: fine) { #controls { opacity: .65; } }
+    @media (max-height: 500px) {
+      #pad { width: 104px; height: 104px; }
+      #dodge { width: 80px; height: 80px; }
+      #controls { bottom: max(12px, env(safe-area-inset-bottom)); }
+      .sheet { padding: 16px; }
+      .sheet p { margin: 10px 0; }
+      #feedback { top: 100px; font-size: 15px; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game" aria-label="Balance Ball court, Salone Edition"></canvas>
+  <div id="hud">
+    <span id="team">DODGING BLUE<br>PLAYER 1 OF 3</span>
+    <span id="score">PLAYER 0.0s<br>TEAM 0.0s</span>
+    <span id="round">ROUND 1/2<br>THROWS: RED</span>
+    <span id="dash-status">DASH READY</span>
+    <span id="difficulty" title="Ball speed; resets for each new dodger">SPEED 1.00×</span>
+    <button id="pause" disabled aria-label="Pause game">PAUSE</button>
+  </div>
+  <div id="controls">
+    <div id="pad" role="group" aria-label="Movement joystick. Drag to move; use WASD or arrow keys with a keyboard."><div id="nub"></div></div>
+    <button id="dodge" disabled>DODGE</button>
+  </div>
+  <div id="feedback" role="status" hidden></div>
+  <div id="panel" role="dialog" aria-modal="true" aria-labelledby="panel-title" aria-describedby="panel-message">
+    <div class="sheet">
+      <h1 id="panel-title">BALANCE BALL</h1>
+      <h2 id="panel-subtitle">🇸🇱 SALONE EDITION</h2>
+      <p id="panel-message">Team Blue dodges first while Team Red throws. Each team gets three dodgers, then roles switch once. The highest total survival time wins!</p>
+      <table id="results" hidden>
+        <caption>Team survival results (seconds)</caption>
+        <thead><tr><th scope="col">Team</th><th scope="col">Players 1 / 2 / 3</th><th scope="col">Total</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Blue</th><td id="blue-times">—</td><td id="blue-total">0.0</td></tr>
+          <tr><th scope="row">Red</th><td id="red-times">—</td><td id="red-total">0.0</td></tr>
+        </tbody>
+      </table>
+      <p id="control-help"><small>WASD / arrows or touch joystick · Space / DODGE to dash<br>P / Escape or PAUSE to take a break<br>Each dodger starts at 1× speed, rising every 5 seconds to 1.65×. Watch for occasional angled throws!</small></p>
+      <div class="actions">
+        <button id="start">PLAY MATCH</button>
+        <button id="restart" hidden>RESTART GAME</button>
+      </div>
+      <p><small>Alpha v0.4 · 🇸🇱 Two-Team Match</small></p>
+    </div>
+  </div>
+  <script>
+    const $ = id => document.getElementById(id);
+    const c = $('game'), ctx = c.getContext('2d');
+    const pad = $('pad'), nub = $('nub');
+    const DASH_DURATION = .27, DASH_COOLDOWN = 1.5, HIT_DURATION = .65;
+    const PLAYER_SPEED = 240, DASH_SPEED = 510, STICK_DEADZONE = .12;
+    const BASE_BALL_SPEED = 290, MAX_THROW_ANGLE = 8 * Math.PI / 180;
+    // Fixed identities: swapping roles never changes either team's shirt color.
+    const TEAM_COLORS = [
+      { name: 'Blue', color: '#0072b2' },
+      { name: 'Red', color: '#a63636' }
+    ];
+    let W, H, D = 1, touchLayout = false;
+    let state = 'menu', resumeState = 'play';
+    let team = 0, players = 3, elapsed = 0, total = 0, round = 1;
+    let currentPlayer = 1, playerTimes = [[], []];
+    let ball = null, thrower = 0, cool = 1.1, inv = 0, dash = 0, dashCooldown = 0, hitTime = 0;
+    let last = performance.now(), keys = {}, stick = { x: 0, y: 0 }, p = { x: 0, y: 0 };
+    let activePointer = null;
+
+    function activeTeam() {
+      return TEAM_COLORS[team];
+    }
+
+    function throwingTeam() {
+      return TEAM_COLORS[1 - team];
+    }
+
+    // Temporary scoring is separate from match flow for future validated rules.
+    function scoreTeam(times) {
+      return times.reduce((sum, seconds) => sum + seconds, 0);
+    }
+
+    function formatScore(seconds) {
+      return (Math.round(seconds * 10) / 10).toFixed(1);
+    }
+
+    function matchResult() {
+      const scores = playerTimes.map(scoreTeam);
+      const tenths = scores.map(score => Math.round(score * 10));
+      return { scores, winner: tenths[0] === tenths[1] ? null : (tenths[0] > tenths[1] ? 0 : 1) };
+    }
+
+    function difficultyMultiplier() {
+      if (elapsed >= 20) return 1.65;
+      if (elapsed >= 15) return 1.5;
+      if (elapsed >= 10) return 1.3;
+      if (elapsed >= 5) return 1.15;
+      return 1;
+    }
+
+    function bounds() {
+      const w = Math.min(W * .76, 760);
+      const top = 112, bottom = touchLayout ? (H < 500 ? 130 : 174) : 80;
+      const available = Math.max(90, H - top - bottom);
+      const h = Math.min(available, 520);
+      return { x: (W - w) / 2, y: top + (available - h) / 2, w, h };
+    }
+
+    function clampPlayer() {
+      const b = bounds();
+      p.x = Math.max(b.x + 20, Math.min(b.x + b.w - 20, p.x));
+      p.y = Math.max(b.y + 30, Math.min(b.y + b.h - 30, p.y));
+    }
+
+    function releaseStick() {
+      const pointer = activePointer;
+      activePointer = null;
+      stick.x = stick.y = 0;
+      nub.style.transform = 'translate(0, 0)';
+      if (pointer !== null && pad.hasPointerCapture(pointer)) pad.releasePointerCapture(pointer);
+    }
+
+    function clearInput() {
+      keys = {};
+      releaseStick();
+    }
+
+    function resize() {
+      const old = W ? bounds() : null;
+      const relativeX = old ? (p.x - old.x) / old.w : .5;
+      const relativeY = old ? (p.y - old.y) / old.h : .5;
+      W = innerWidth;
+      H = innerHeight;
+      D = Math.min(devicePixelRatio || 1, 2);
+      touchLayout = matchMedia('(pointer: coarse)').matches;
+      c.width = Math.round(W * D);
+      c.height = Math.round(H * D);
+      ctx.setTransform(D, 0, 0, D, 0, 0);
+      const b = bounds();
+      p.x = b.x + relativeX * b.w;
+      p.y = b.y + relativeY * b.h;
+      clampPlayer();
+      clearInput();
+      // A ball aimed at the old court must not hit after an orientation change.
+      ball = null;
+      cool = Math.max(cool, .6);
+    }
+
+    function resetPlayer() {
+      const b = bounds();
+      clearInput();
+      p.x = b.x + b.w / 2;
+      p.y = b.y + b.h / 2;
+      currentPlayer = 4 - players;
+      elapsed = 0;
+      inv = .9;
+      dash = dashCooldown = hitTime = 0;
+      ball = null;
+      cool = 1.1;
+    }
+
+    function resetRound() {
+      players = 3;
+      elapsed = total = 0;
+      thrower = 0;
+      resumeState = 'play';
+      resetPlayer();
+      state = 'play';
+      last = performance.now();
+      renderPanel();
+      renderHUD();
+    }
+
+    function start() {
+      playerTimes = [[], []];
+      team = 0;
+      round = 1;
+      resetRound();
+    }
+
+    function nextTeam() {
+      if (state !== 'between' || team !== 0 || playerTimes[0].length !== 3) return;
+      team = 1;
+      round = 2;
+      resetRound();
+    }
+
+    function pauseGame() {
+      if (state !== 'play' && state !== 'hit') return;
+      resumeState = state;
+      state = 'paused';
+      clearInput();
+      renderPanel();
+      renderHUD();
+    }
+
+    function resumeGame() {
+      if (state !== 'paused' || document.hidden) return;
+      clearInput();
+      state = resumeState;
+      last = performance.now();
+      renderPanel();
+      renderHUD();
+    }
+
+    function togglePause() {
+      if (state === 'paused') resumeGame();
+      else pauseGame();
+    }
+
+    function renderPanel() {
+      const visible = ['menu', 'paused', 'between', 'finished'].includes(state);
+      $('panel').classList.toggle('hidden', !visible);
+      $('hud').inert = visible;
+      $('controls').inert = visible;
+      $('restart').hidden = state !== 'paused' && state !== 'between';
+      $('results').hidden = state !== 'finished';
+      $('control-help').hidden = state === 'between' || state === 'finished';
+      ['blue', 'red'].forEach((name, index) => {
+        $(name + '-times').textContent = playerTimes[index].map(formatScore).join(' / ') || '—';
+        $(name + '-total').textContent = formatScore(scoreTeam(playerTimes[index]));
+      });
+      if (!visible) {
+        // Do not leave keyboard focus on a button hidden behind gameplay.
+        if ($('panel').contains(document.activeElement)) document.activeElement.blur();
+        return;
+      }
+      if (state === 'paused') {
+        $('panel-title').textContent = 'GAME PAUSED';
+        $('panel-subtitle').textContent = '🇸🇱 SALONE EDITION';
+        $('panel-message').textContent = 'Take a breather. The ball, survival clock and dash cooldown are paused. Resume when you are ready.';
+        $('start').textContent = 'RESUME';
+      } else if (state === 'between') {
+        $('panel-title').textContent = 'TEAMS SWITCH';
+        $('panel-subtitle').textContent = '🇸🇱 TEAM RED DODGES NEXT';
+        $('panel-message').textContent = 'Team Blue survived ' + formatScore(total) + ' seconds across three players. Next: Team Red dodges and Team Blue controls both throwers. Start the second and final round when ready.';
+        $('start').textContent = 'START RED ROUND';
+      } else if (state === 'finished') {
+        const result = matchResult();
+        $('panel-title').textContent = 'MATCH COMPLETE';
+        $('panel-subtitle').textContent = result.winner === null ? '🇸🇱 IT’S A TIE!' : '🇸🇱 TEAM ' + TEAM_COLORS[result.winner].name.toUpperCase() + ' WINS!';
+        $('panel-message').textContent = 'Three turns each. Highest combined survival wins; equal totals to 0.1 second are a tie.';
+        $('start').textContent = 'PLAY AGAIN';
+      }
+      $('start').focus({ preventScroll: true });
+    }
+
+    function renderHUD() {
+      const identity = activeTeam();
+      $('team').textContent = 'DODGING ' + identity.name.toUpperCase() + '\nPLAYER ' + currentPlayer + ' OF 3';
+      $('team').style.borderLeftColor = identity.color;
+      $('score').textContent = 'PLAYER ' + formatScore(elapsed) + 's\nTEAM ' + formatScore(total) + 's';
+      $('round').textContent = 'ROUND ' + round + '/2\nTHROWS: ' + throwingTeam().name.toUpperCase();
+      $('difficulty').textContent = 'SPEED ' + difficultyMultiplier().toFixed(2) + '×';
+      const cooldownLabel = (Math.ceil(dashCooldown * 10) / 10).toFixed(1) + 's';
+      $('dash-status').textContent = dashCooldown > 0 ? 'DASH ' + cooldownLabel : 'DASH READY';
+      $('dodge').disabled = state !== 'play' || dashCooldown > 0;
+      $('dodge').textContent = dashCooldown > 0 ? cooldownLabel : 'DODGE';
+      $('pause').disabled = !['play', 'hit', 'paused'].includes(state);
+      $('pause').textContent = state === 'paused' ? 'RESUME' : 'PAUSE';
+      $('pause').setAttribute('aria-label', state === 'paused' ? 'Resume game' : 'Pause game');
+      const hitVisible = state === 'hit' || (state === 'paused' && resumeState === 'hit');
+      $('feedback').hidden = !hitVisible;
+    }
+
+    function dodge() {
+      if (state !== 'play' || dashCooldown > 0) return;
+      dash = DASH_DURATION;
+      dashCooldown = DASH_COOLDOWN;
+      inv = Math.max(inv, DASH_DURATION);
+      renderHUD();
+    }
+
+    function takeHit() {
+      if (state !== 'play' || inv > 0 || players === 0) return;
+      playerTimes[team].push(elapsed);
+      total = scoreTeam(playerTimes[team]);
+      players = Math.max(0, players - 1);
+      state = 'hit';
+      hitTime = HIT_DURATION;
+      ball = null;
+      dash = 0;
+      clearInput();
+      $('feedback').textContent = 'TEAM ' + activeTeam().name.toUpperCase() + ' · PLAYER ' + currentPlayer + ' OUT · ' + formatScore(elapsed) + 's' + (players > 0 ? ' · NEXT TEAMMATE UP' : (team === 0 ? ' · ROLES SWITCH NEXT' : ' · MATCH RESULT NEXT'));
+      renderHUD();
+    }
+
+    $('start').addEventListener('click', () => {
+      if (state === 'menu') start();
+      else if (state === 'paused') resumeGame();
+      else if (state === 'between') nextTeam();
+      else if (state === 'finished') start();
+    });
+    $('restart').addEventListener('click', () => {
+      if (state === 'paused' || state === 'between') start();
+    });
+    $('pause').addEventListener('click', togglePause);
+    $('dodge').addEventListener('pointerdown', event => {
+      event.preventDefault();
+      dodge();
+    });
+    // Native keyboard activation still works on the on-screen button.
+    $('dodge').addEventListener('click', event => { if (event.detail === 0) dodge(); });
+
+    addEventListener('keydown', event => {
+      const key = event.key.toLowerCase();
+      if (key === 'p' || key === 'escape') {
+        event.preventDefault();
+        if (!event.repeat) togglePause();
+        return;
+      }
+      const movementKey = ['w', 'a', 's', 'd', 'arrowup', 'arrowleft', 'arrowdown', 'arrowright'].includes(key);
+      if (key === ' ' && event.target.closest?.('button')) return;
+      if (state !== 'play' || (!movementKey && key !== ' ')) return;
+      event.preventDefault();
+      if (event.repeat || keys[key]) return;
+      keys[key] = true;
+      if (key === ' ') dodge();
+    });
+    addEventListener('keyup', event => { delete keys[event.key.toLowerCase()]; });
+
+    function padMove(event) {
+      const r = pad.getBoundingClientRect();
+      const x = event.clientX - r.left - r.width / 2;
+      const y = event.clientY - r.top - r.height / 2;
+      const length = Math.hypot(x, y);
+      const radius = Math.max(1, r.width / 2 - nub.offsetWidth / 2 - 6);
+      const travel = Math.min(length, radius);
+      const scale = length > 0 ? travel / length : 0;
+      nub.style.transform = 'translate(' + x * scale + 'px, ' + y * scale + 'px)';
+      const strength = Math.max(0, (travel / radius - STICK_DEADZONE) / (1 - STICK_DEADZONE));
+      stick.x = length > 0 ? x / length * strength : 0;
+      stick.y = length > 0 ? y / length * strength : 0;
+    }
+
+    pad.addEventListener('pointerdown', event => {
+      event.preventDefault();
+      if (state !== 'play' || activePointer !== null || event.button !== 0) return;
+      activePointer = event.pointerId;
+      pad.setPointerCapture(activePointer);
+      padMove(event);
+    });
+    pad.addEventListener('pointermove', event => {
+      if (state !== 'play' || event.pointerId !== activePointer) return;
+      event.preventDefault();
+      padMove(event);
+    });
+    function endPointer(event) {
+      if (event.pointerId === activePointer) releaseStick();
+    }
+    pad.addEventListener('pointerup', endPointer);
+    pad.addEventListener('pointercancel', endPointer);
+    pad.addEventListener('lostpointercapture', endPointer);
+    addEventListener('blur', () => { clearInput(); pauseGame(); });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { clearInput(); pauseGame(); }
+    });
+    addEventListener('resize', resize);
+
+    function ellipse(x, y, rx, ry, color) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function person(x, y, color, scale = 1) {
+      ellipse(x + 4, y + 14 * scale, 14 * scale, 5 * scale, '#0003');
+      ctx.fillStyle = color;
+      ctx.fillRect(x - 9 * scale, y - 9 * scale, 18 * scale, 22 * scale);
+      // Keep light shirts distinct from the sandy court as well as each other.
+      ctx.strokeStyle = '#16372e';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x - 9 * scale, y - 9 * scale, 18 * scale, 22 * scale);
+      ellipse(x, y - 15 * scale, 9 * scale, 10 * scale, '#7c4a2b');
+      ellipse(x, y - 21 * scale, 9 * scale, 4 * scale, '#24170f');
+      ctx.fillStyle = '#2a2521';
+      ctx.fillRect(x - 8 * scale, y + 12 * scale, 6 * scale, 10 * scale);
+      ctx.fillRect(x + 3 * scale, y + 12 * scale, 6 * scale, 10 * scale);
+    }
+
+    function draw() {
+      const b = bounds();
+      const shirt = activeTeam().color;
+      ctx.fillStyle = '#89c8e5';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#edb97e';
+      ctx.fillRect(0, H * .25, W, H * .75);
+      const houses = ['#e28c6f', '#f3c16c', '#6bada5', '#e4a1b2', '#d79d68', '#8eb9cc'];
+      for (let i = 0; i < 7; i++) {
+        const x = i * W / 6 - W / 15, w = W / 5, h = H * .20 + (i % 3) * H * .025;
+        ctx.fillStyle = houses[i % 6];
+        ctx.fillRect(x, H * .25 - h, w, h);
+        ctx.fillStyle = '#443e37';
+        for (let j = 0; j < 3; j++) ctx.fillRect(x + 15 + j * w / 3, H * .25 - h + 15, Math.max(10, w / 7), h * .20);
+        ctx.fillStyle = '#77553e';
+        ctx.fillRect(x, H * .25 - 4, w, 6);
+      }
+      ctx.fillStyle = '#b98c60';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      const hitVisible = state === 'hit' || (state === 'paused' && resumeState === 'hit');
+      ctx.strokeStyle = hitVisible ? '#b52f2a' : '#fff8';
+      ctx.lineWidth = hitVisible ? 7 : 3;
+      ctx.strokeRect(b.x, b.y, b.w, b.h);
+      ctx.setLineDash([10, 9]);
+      ctx.beginPath();
+      ctx.moveTo(W / 2, b.y);
+      ctx.lineTo(W / 2, b.y + b.h);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#ffffff16';
+      ctx.fillRect(b.x + 15, b.y + 15, b.w - 30, b.h - 30);
+      person(b.x - 22, b.y + b.h / 2, throwingTeam().color, 1.15);
+      person(b.x + b.w + 22, b.y + b.h / 2, throwingTeam().color, 1.15);
+      for (let i = 0; i < 3; i++) {
+        ellipse(b.x + 50 + i * 28, b.y + b.h + 23, 9, 4, '#0003');
+        ellipse(b.x + 50 + i * 28, b.y + b.h + 12, 8, 8, i < players ? shirt : '#777');
+        ctx.strokeStyle = '#16372e';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      if (hitVisible) ellipse(p.x, p.y - 4, 30, 32, '#b52f2a77');
+      ctx.globalAlpha = inv > 0 && Math.floor(inv * 10) % 2 === 0 ? .5 : 1;
+      person(p.x, p.y, shirt, 1.15);
+      ctx.globalAlpha = 1;
+      if (dash > 0) {
+        ctx.strokeStyle = '#ffe2a0';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y - 4, 27, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (ball) {
+        ellipse(ball.x + 4, ball.y + 10, ball.r, ball.r * .45, '#0003');
+        ellipse(ball.x, ball.y, ball.r, ball.r, '#f3e4b6');
+        ctx.strokeStyle = '#ad633c';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, ball.r * .65, 0, Math.PI * 1.4);
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 12px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText('DODGE ZONE', W / 2, b.y + 20);
+    }
+
+    function throwBall() {
+      if (state !== 'play' || ball) return;
+      const b = bounds();
+      const sx = thrower ? b.x + b.w + 20 : b.x - 20, sy = b.y + b.h / 2;
+      const horizontal = Math.abs(p.x - sx);
+      const directAngle = Math.atan2(p.y - sy, horizontal);
+      let angle = directAngle;
+      if (Math.random() < .25) {
+        const offset = (Math.random() * 2 - 1) * Math.min(40, b.h * .1);
+        const targetY = Math.max(b.y + 30, Math.min(b.y + b.h - 30, p.y + offset));
+        const variedAngle = Math.atan2(targetY - sy, horizontal);
+        angle = Math.max(directAngle - MAX_THROW_ANGLE, Math.min(directAngle + MAX_THROW_ANGLE, variedAngle));
+      }
+      // Heading stays straight; only speed changes at a dodger's time thresholds.
+      const speed = BASE_BALL_SPEED * difficultyMultiplier();
+      ball = { x: sx, y: sy, vx: (thrower ? -1 : 1) * Math.cos(angle) * speed, vy: Math.sin(angle) * speed, r: 11, speedMultiplier: difficultyMultiplier() };
+      thrower = 1 - thrower;
+      cool = 1.1;
+    }
+
+    function update(dt) {
+      if (state === 'hit') {
+        hitTime = Math.max(0, hitTime - dt);
+        if (hitTime === 0) {
+          if (players === 0) {
+            state = team === 0 ? 'between' : 'finished';
+            clearInput();
+            renderPanel();
+          } else {
+            resetPlayer();
+            state = 'play';
+          }
+        }
+        renderHUD();
+        return;
+      }
+      if (state !== 'play') return;
+      const b = bounds();
+      elapsed += dt;
+      total = scoreTeam(playerTimes[team]) + elapsed;
+      inv = Math.max(0, inv - dt);
+      dash = Math.max(0, dash - dt);
+      dashCooldown = Math.max(0, dashCooldown - dt);
+      const x = (keys.d || keys.arrowright ? 1 : 0) - (keys.a || keys.arrowleft ? 1 : 0) + stick.x;
+      const y = (keys.s || keys.arrowdown ? 1 : 0) - (keys.w || keys.arrowup ? 1 : 0) + stick.y;
+      // Preserve analog strength; only normalize combinations above full speed.
+      const length = Math.max(1, Math.hypot(x, y));
+      const speed = (dash > 0 ? DASH_SPEED : PLAYER_SPEED) * dt;
+      p.x += x / length * speed;
+      p.y += y / length * speed;
+      clampPlayer();
+      cool -= dt;
+      if (!ball && cool <= 0) {
+        throwBall();
+      }
+      if (ball) {
+        const multiplier = difficultyMultiplier();
+        if (ball.speedMultiplier !== undefined && ball.speedMultiplier !== multiplier) {
+          const ratio = multiplier / ball.speedMultiplier;
+          ball.vx *= ratio;
+          ball.vy *= ratio;
+          ball.speedMultiplier = multiplier;
+        }
+        ball.x += ball.vx * dt;
+        ball.y += ball.vy * dt;
+        if (inv <= 0 && Math.hypot(ball.x - p.x, ball.y - (p.y - 3)) < ball.r + 13) {
+          takeHit();
+        } else if (ball.x < b.x - 65 || ball.x > b.x + b.w + 65 || ball.y < b.y - 40 || ball.y > b.y + b.h + 40) {
+          ball = null;
+          cool = .4;
+        }
+      }
+      renderHUD();
+    }
+
+    function frame(t) {
+      const dt = Math.max(0, Math.min(.035, (t - last) / 1000));
+      last = t;
+      update(dt);
+      draw();
+      requestAnimationFrame(frame);
+    }
+
+    resize();
+    resetPlayer();
+    renderPanel();
+    renderHUD();
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>
