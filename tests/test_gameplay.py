@@ -659,6 +659,98 @@ class GameplayTests(unittest.TestCase):
             self.page.locator("#start").tap()
             self.assert_fresh_match()
 
+    def test_mobile_visible_focus_notifications_keep_real_joystick_active(self):
+        # CDP supplies real touch input. Blur notifications are synthetic because
+        # Chromium cannot reproduce an iPhone Safari focus quirk or its cause.
+        for width,height in ((390,844),(820,1180)):
+            with self.subTest(viewport=(width,height)):
+                self.open_page(mobile=True)
+                self.page.set_viewport_size({"width":width,"height":height})
+                self.page.clock.run_for(40)
+                self.start()
+                self.assertTrue(self.page.evaluate("touchLayout"))
+                self.assertFalse(self.page.evaluate("document.hidden"))
+                self.page.locator("#pause").focus()
+                self.page.locator("#pause").evaluate("button=>button.blur()")
+                self.assertEqual(self.page.evaluate("state"),"play")
+                session=self.context.new_cdp_session(self.page)
+                box=self.page.locator("#pad").bounding_box()
+                x,y=box["x"]+box["width"]/2+25,box["y"]+box["height"]/2
+                self.touch(session,"touchStart",[(1,x,y)])
+                before=self.page.evaluate("({owner:activePointer,stick:{...stick},x:p.x})")
+                self.assertGreater(before["stick"]["x"],0)
+                self.page.evaluate("window.dispatchEvent(new Event('blur'))")
+                self.assertEqual(self.page.evaluate("state"),"play",
+                                 "A visible touch page must ignore spurious window blur")
+                self.page.evaluate("$('pause').dispatchEvent(new FocusEvent('blur',{bubbles:true}))")
+                self.assertEqual(self.page.evaluate("state"),"play")
+                self.assertEqual(self.page.evaluate("activePointer"),before["owner"])
+                self.assertEqual(self.page.evaluate("({...stick})"),before["stick"])
+                self.page.clock.run_for(100)
+                self.assertGreater(self.page.evaluate("p.x"),before["x"])
+                self.page.locator("#pause").click()
+                self.assertEqual(self.page.evaluate("state"),"paused",
+                                 "Manual pause must still work while a joystick finger is down")
+                self.assertIsNone(self.page.evaluate("activePointer"))
+                self.assertEqual(self.page.evaluate("({...stick})"),{"x":0,"y":0})
+                self.page.locator("#start").click()
+                origin=self.page.evaluate("p.x")
+                self.touch(session,"touchMove",[(1,x+5,y)])
+                self.page.clock.run_for(100)
+                self.assertEqual(self.page.evaluate("p.x"),origin,
+                                 "A pre-pause finger must be pressed again after resume")
+                self.touch(session,"touchCancel",[])
+
+    def test_desktop_focus_notifications_only_pause_for_window_blur(self):
+        self.start()
+        self.assertFalse(self.page.evaluate("touchLayout"))
+        self.page.locator("#pause").focus()
+        self.page.locator("#pause").evaluate("button=>button.blur()")
+        self.assertEqual(self.page.evaluate("state"),"play")
+        self.page.keyboard.down("d")
+        self.page.evaluate("$('pause').dispatchEvent(new FocusEvent('blur',{bubbles:true}))")
+        self.assertEqual(self.page.evaluate("state"),"play",
+                         "A descendant blur notification must not pause the window")
+        self.assertTrue(self.page.evaluate("keys.d"))
+        self.page.evaluate("window.dispatchEvent(new Event('blur'))")
+        self.assertEqual(self.page.evaluate("state"),"paused",
+                         "Desktop window focus loss must still pause")
+        self.assertEqual(self.page.evaluate("keys"),{})
+        self.page.keyboard.up("d")
+
+    def test_mobile_hidden_visibility_and_pagehide_pause_and_release_input(self):
+        self.open_page(mobile=True)
+        self.start()
+        session=self.context.new_cdp_session(self.page)
+        box=self.page.locator("#pad").bounding_box()
+        x,y=box["x"]+box["width"]/2+25,box["y"]+box["height"]/2
+        for event in ("visibilitychange","pagehide"):
+            with self.subTest(event=event):
+                self.touch(session,"touchStart",[(1,x,y)])
+                self.page.keyboard.down("d")
+                self.assertGreater(self.page.evaluate("stick.x"),0)
+                if event=="visibilitychange":
+                    self.page.evaluate("""()=>{
+                        Object.defineProperty(document,'hidden',{configurable:true,value:true});
+                        Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
+                        document.dispatchEvent(new Event('visibilitychange'));
+                        delete document.hidden;delete document.visibilityState;
+                    }""")
+                else:
+                    self.page.evaluate("window.dispatchEvent(new PageTransitionEvent('pagehide'))")
+                self.assertEqual(self.page.evaluate("state"),"paused")
+                self.assertIsNone(self.page.evaluate("activePointer"))
+                self.assertEqual(self.page.evaluate("({...stick})"),{"x":0,"y":0})
+                self.assertEqual(self.page.evaluate("keys"),{})
+                frozen=self.snapshot()
+                self.page.evaluate("window.dispatchEvent(new Event('focus'));document.dispatchEvent(new Event('visibilitychange'))")
+                self.page.clock.run_for(200)
+                self.assertEqual(self.snapshot(),frozen,"Returning to the page must require explicit resume")
+                self.page.keyboard.up("d")
+                self.touch(session,"touchCancel",[])
+                self.page.locator("#start").click()
+                self.assertEqual(self.page.evaluate("state"),"play")
+
     def touch(self, session, kind, points):
         # CDP touchEnd lists the contacts ending, not contacts still held.
         session.send("Input.dispatchTouchEvent", {

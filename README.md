@@ -1,4 +1,4 @@
-# Balance Ball: Salone Edition — Alpha v0.4
+# Balance Ball: Salone Edition — Alpha v0.4.1
 
 A single-file HTML Canvas browser game celebrating its Sierra Leonean Salone identity, with a sandy court, colorful neighborhood, and green-and-gold presentation. The game runs offline without a build step, installed packages, accounts, or networking.
 
@@ -16,7 +16,7 @@ Then open <http://localhost:8000>. Any static host can also serve the same file.
 
 - Move with WASD or the arrow keys, or use the mobile analog joystick. Joystick distance controls movement speed; one pointer owns the stick so another finger can press DODGE at the same time.
 - Press Space or DODGE for a 0.27-second evasive dash, with a 1.5-second cooldown shown on the button.
-- Press P or Escape, or use the on-screen pause button, to pause and resume. Losing window focus or switching tabs pauses automatically; explicitly resume to continue. Paused time does not advance gameplay or cooldowns.
+- Press P or Escape, or use the on-screen pause button, to pause and resume. Switching tabs, leaving the page, or backgrounding the app pauses automatically; desktop window focus loss also pauses. On mobile touch layouts, focus notifications while the page remains visible do not interrupt the joystick. Explicitly resume to continue. Paused time does not advance gameplay or cooldowns.
 
 ## A two-team match
 
@@ -78,6 +78,7 @@ On a desktop browser:
 
 On physical mobile devices:
 
+- On iPhone/Safari, start or resume a match, then drag the joystick repeatedly and press DODGE with a second finger. The visible game must keep running without an unexpected pause. Test again after focusing the pause/resume controls.
 - Drag the joystick at partial and full travel, then hold it with one finger while pressing DODGE with another. A second joystick touch must not take control. Release or cancel a gesture and confirm movement stops.
 - Check portrait at a 320 CSS-pixel viewport width and rotate to landscape. Team roles, player number, clocks, round, SPEED, and pause controls should stay readable and usable. Rotation should keep the player inside the court and clear the old ball.
 - Pause during movement and a cooldown, then switch apps or lock the screen. Returning must require explicit resume and a fresh movement touch, with no stale input or reset difficulty.

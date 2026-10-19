@@ -1,5 +1,11 @@
 # Development changelog
 
+## Alpha v0.4.1 — mobile joystick pause fix
+
+- Addressed the reported iPhone/Safari joystick interruption by separating visible-page focus changes from backgrounding. Window blur in mobile touch layouts no longer pauses the visible game or discards the active joystick.
+- Retained explicit pause/resume, desktop window-blur pause, and automatic pause with input cleanup when the document becomes hidden or the page is left. Returning does not automatically resume.
+- Added focus-event regressions around real emulated touch gestures, desktop focus loss, hidden-page transitions, and page lifecycle events. Physical iPhone/Safari retesting is still required.
+
 ## Alpha v0.4 — two-team matches and progressive difficulty
 
 - Replaced endless team rotation with exactly two three-player teams: Blue starts dodging against Red, then Red dodges against Blue. Individual replacements retain their team color; both automated throwers change color when the roles switch.

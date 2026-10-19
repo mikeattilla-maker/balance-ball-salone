@@ -81,7 +81,7 @@
         <button id="start">PLAY MATCH</button>
         <button id="restart" hidden>RESTART GAME</button>
       </div>
-      <p><small>Alpha v0.4 · 🇸🇱 Two-Team Match</small></p>
+      <p><small>Alpha v0.4.1 · 🇸🇱 Two-Team Match</small></p>
     </div>
   </div>
   <script>
@@ -388,10 +388,16 @@
     pad.addEventListener('pointerup', endPointer);
     pad.addEventListener('pointercancel', endPointer);
     pad.addEventListener('lostpointercapture', endPointer);
-    addEventListener('blur', () => { clearInput(); pauseGame(); });
+    addEventListener('blur', event => {
+      if (event.target !== window) return;
+      // Mobile Safari can blur a visible page during control focus changes.
+      // Backgrounding is handled below; keep an active touch gesture intact.
+      if (document.hidden || !touchLayout) { clearInput(); pauseGame(); }
+    });
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) { clearInput(); pauseGame(); }
     });
+    addEventListener('pagehide', () => { clearInput(); pauseGame(); });
     addEventListener('resize', resize);
 
     function ellipse(x, y, rx, ry, color) {
