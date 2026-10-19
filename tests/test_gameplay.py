@@ -88,33 +88,45 @@ class GameplayTests(unittest.TestCase):
 
     def snapshot(self):
         return self.page.evaluate("""() => ({
-            state, team, players, round, elapsed, total, cool, inv, dash,
+            state, team, players, currentPlayer, round, elapsed, total, cool, inv, dash,
             dashCooldown, hitTime, p: {...p}, ball: ball && {...ball},
-            stick: {...stick}, keys: {...keys}
+            stick: {...stick}, keys: {...keys}, playerTimes:playerTimes.map(times=>[...times]),
+            multiplier:difficultyMultiplier()
         })""")
 
     def center_player(self):
         self.page.evaluate("{ const b=bounds(); p.x=b.x+b.w/2; p.y=b.y+b.h/2; }")
         return self.page.evaluate("({...p})")
 
-    def collide(self):
-        # Aim a real collision at the active player's hit circle. The game still
-        # runs its normal update, feedback, elimination and transition handlers.
-        self.page.evaluate("inv=0; ball={x:p.x,y:p.y-3,vx:0,vy:0,r:11}")
-        self.page.clock.run_for(35)
+    def collide(self, duration=None):
+        # Use the real collision/recording path. Optional exact durations let the
+        # scoring tests distinguish raw times from rounded display precision.
+        self.page.evaluate("""duration => {
+            if(duration!==null) {elapsed=duration;total=scoreTeam(playerTimes[team])+elapsed;}
+            inv=0;ball={x:p.x,y:p.y-3,vx:0,vy:0,r:11};
+            if(duration!==null) update(0);
+        }""", duration)
+        if duration is None:
+            self.page.clock.run_for(35)
 
-    def eliminate_team(self):
-        for remaining in (2, 1, 0):
-            self.collide()
+    def eliminate_team(self, times=None):
+        team_index=self.page.evaluate("team")
+        for index, remaining in enumerate((2, 1, 0)):
+            self.assertEqual(self.page.evaluate("currentPlayer"), index+1)
+            self.collide(None if times is None else times[index])
             self.assertEqual(self.page.evaluate("players"), remaining)
             self.assertEqual(self.page.evaluate("state"), "hit")
+            self.assertEqual(self.page.evaluate("playerTimes[team].length"), index+1)
+            if times is not None:
+                self.assertEqual(self.page.evaluate("playerTimes[team]"), times[:index+1])
+                self.assertAlmostEqual(self.page.evaluate("total"), sum(times[:index+1]))
             self.page.clock.run_for(700)
-        self.assertEqual(self.page.evaluate("state"), "between")
+        self.assertEqual(self.page.evaluate("state"), "between" if team_index==0 else "finished")
 
     def assert_fresh_round(self, team, round_number):
         data = self.snapshot()
-        self.assertEqual((data["state"], data["team"], data["round"], data["players"]),
-                         ("play", team, round_number, 3))
+        self.assertEqual((data["state"], data["team"], data["round"], data["players"],data["currentPlayer"]),
+                         ("play", team, round_number, 3,1))
         self.assertEqual((data["elapsed"], data["total"], data["dash"], data["dashCooldown"]),
                          (0, 0, 0, 0))
         self.assertIsNone(data["ball"])
@@ -123,10 +135,22 @@ class GameplayTests(unittest.TestCase):
         self.assertGreater(data["inv"], 0)
         self.assertEqual(data["keys"], {})
         self.assertEqual(data["stick"], {"x": 0, "y": 0})
-        self.assertIn(f"TEAM {chr(65 + team)}", self.page.locator("#team").inner_text())
-        self.assertIn("3 LEFT", self.page.locator("#team").inner_text())
-        self.assertEqual(self.page.locator("#round").inner_text(), f"ROUND {round_number}")
+        self.assertEqual(data["playerTimes"][team], [])
+        dodging,throwing=("BLUE","RED") if team==0 else ("RED","BLUE")
+        self.assertIn(f"DODGING {dodging}", self.page.locator("#team").inner_text())
+        self.assertIn("PLAYER 1 OF 3", self.page.locator("#team").inner_text())
+        self.assertIn(f"ROUND {round_number}/2", self.page.locator("#round").inner_text())
+        self.assertIn(f"THROWS: {throwing}", self.page.locator("#round").inner_text())
         self.assertTrue(self.page.locator("#dodge").is_enabled())
+        self.assertEqual(self.page.locator("#difficulty").inner_text(), "SPEED 1.00×")
+        self.assertEqual(self.page.evaluate("difficultyMultiplier()"), 1)
+        self.assertTrue(self.page.locator("#results").is_hidden())
+
+    def assert_fresh_match(self):
+        self.assert_fresh_round(0,1)
+        self.assertEqual(self.page.evaluate("playerTimes"), [[],[]])
+        self.assertEqual(self.page.evaluate("activeTeam().name"), "Blue")
+        self.assertEqual(self.page.evaluate("throwingTeam().name"), "Red")
 
     def assert_modal_focus(self):
         self.assertEqual(self.page.evaluate("document.activeElement.id"), "start")
@@ -255,68 +279,385 @@ class GameplayTests(unittest.TestCase):
         }""")
         self.assertEqual(self.page.evaluate("state"), "paused")
 
-    def test_hit_feedback_exact_elimination_next_team_and_restart(self):
+    def test_hit_feedback_player_rotation_team_switch_and_restart(self):
         self.start()
         self.page.clock.run_for(200)
-        for remaining in (2, 1, 0):
+        for remaining in (2,1,0):
             self.collide()
             self.assertEqual(self.page.evaluate("state"), "hit")
             self.assertEqual(self.page.evaluate("players"), remaining)
-            self.assertIn(f"{remaining} LEFT", self.page.locator("#team").inner_text())
+            self.assertEqual(self.page.evaluate("currentPlayer"), 3-remaining)
+            self.assertEqual(self.page.evaluate("playerTimes[0].length"), 3-remaining)
             self.assertTrue(self.page.locator("#feedback").is_visible())
             self.assertTrue(self.page.locator("#feedback").inner_text().strip())
-            score_at_hit = self.page.evaluate("total")
+            score_at_hit=self.page.evaluate("({total,elapsed,times:playerTimes.map(t=>[...t])})")
+            self.page.evaluate("takeHit()")
             self.page.clock.run_for(250)
-            self.assertEqual(self.page.evaluate("players"), remaining,
-                             "One collision must eliminate exactly one teammate")
-            self.assertEqual(self.page.evaluate("total"), score_at_hit,
-                             "Survival time must not grow during hit feedback")
-            if remaining == 2:
-                # Pausing hit feedback must preserve its remaining time and resume
-                # the same elimination, rather than skipping to the next player.
+            self.assertEqual(self.page.evaluate("({total,elapsed,times:playerTimes.map(t=>[...t])})"),score_at_hit,
+                             "A hit must record once and freeze both survival timers")
+            if remaining==2:
                 self.page.locator("#pause").click()
-                hit_time = self.page.evaluate("hitTime")
+                hit_time=self.page.evaluate("hitTime")
                 self.page.clock.run_for(1000)
-                self.assertEqual(self.page.evaluate("hitTime"), hit_time)
+                self.assertEqual(self.page.evaluate("hitTime"),hit_time)
                 self.page.locator("#start").click()
-                self.assertEqual(self.page.evaluate("state"), "hit")
+                self.assertEqual(self.page.evaluate("state"),"hit")
             self.page.clock.run_for(450)
-            self.assertEqual(self.page.evaluate("state"), "play" if remaining else "between")
+            self.assertEqual(self.page.evaluate("state"),"play" if remaining else "between")
             if remaining:
-                self.assertGreater(self.page.evaluate("inv"), 0)
+                self.assertEqual(self.page.evaluate("currentPlayer"),4-remaining)
+                self.assertLess(self.page.evaluate("elapsed"),.1)
+                self.assertGreater(self.page.evaluate("inv"),0)
                 self.assertIsNone(self.page.evaluate("ball"))
-        self.assertIn("NEXT TEAM", self.page.locator("#start").inner_text())
+                self.assertEqual(self.page.evaluate("difficultyMultiplier()"),1)
+                self.assertIn(f"PLAYER {4-remaining} OF 3",self.page.locator("#team").inner_text())
+        self.assertEqual(self.page.evaluate("team"),0,"Roles change only when the next round starts")
+        self.assertEqual(self.page.evaluate("playerTimes[1]"),[])
+        self.assertIn("SWITCH",self.page.locator("#panel").inner_text().upper())
+        self.assertEqual(self.page.locator("#start").inner_text(),"START RED ROUND")
         self.assert_modal_focus()
-        final_total = self.page.evaluate("total")
+        frozen=self.snapshot()
         self.page.clock.run_for(2000)
-        self.assertEqual(self.page.evaluate("total"), final_total)
+        self.assertEqual(self.snapshot(),frozen)
         self.page.locator("#start").click()
-        self.assert_fresh_round(1, 2)
+        self.assert_fresh_round(1,2)
+        unchanged=self.snapshot()
+        self.page.evaluate("nextTeam()")
+        self.assertEqual(self.snapshot(),unchanged,"An extra round request must not create another team")
         self.page.locator("#pause").click()
         self.page.locator("#restart").click()
-        self.assert_fresh_round(0, 1)
+        self.assert_fresh_match()
         self.eliminate_team()
         self.page.locator("#restart").click()
-        self.assert_fresh_round(0, 1)
+        self.assert_fresh_match()
 
-    def test_real_throwing_loop_eliminates_a_stationary_team(self):
+    def test_real_throwing_loop_completes_exactly_two_rounds(self):
+        self.page.evaluate("Math.random=()=>.99")
         self.start(quiet=False)
-        seen_counts = {3}
-        seen_throwers = set()
-        for _ in range(200):
-            self.page.clock.run_for(100)
-            data = self.snapshot()
-            seen_counts.add(data["players"])
-            if data["ball"] is not None:
-                seen_throwers.add(self.page.evaluate("thrower"))
-            if data["state"] == "between":
-                break
-        self.assertEqual(self.page.evaluate("state"), "between",
-                         "Real alternating throws must complete a round without injected collisions")
-        self.assertEqual(seen_counts, {3, 2, 1, 0})
-        self.assertEqual(seen_throwers, {0, 1})
-        self.assertGreater(self.page.evaluate("total"), 3)
-        self.assertEqual(self.page.evaluate("players"), 0)
+        opportunities=set()
+        throwers={0:set(),1:set()}
+        for team_index in (0,1):
+            terminal="between" if team_index==0 else "finished"
+            for _ in range(200):
+                data=self.snapshot()
+                opportunities.add((data["team"],data["currentPlayer"]))
+                if data["ball"] is not None:
+                    throwers[team_index].add(self.page.evaluate("thrower"))
+                if data["state"]==terminal:
+                    break
+                self.page.clock.run_for(100)
+            self.assertEqual(self.page.evaluate("state"),terminal,
+                             "Real alternating throws must complete each three-player round")
+            self.assertEqual(len(self.page.evaluate("playerTimes[team]")),3)
+            if team_index==0:
+                self.page.locator("#start").click()
+        self.assertEqual(opportunities,{(0,1),(0,2),(0,3),(1,1),(1,2),(1,3)})
+        self.assertEqual(throwers,{0:{0,1},1:{0,1}})
+        recorded=self.page.evaluate("playerTimes")
+        self.assertTrue(all(time>0 for times in recorded for time in times))
+        self.assertEqual(self.page.evaluate("matchResult().scores"),[sum(times) for times in recorded])
+        frozen=self.snapshot()
+        self.page.evaluate("nextTeam()")
+        self.page.clock.run_for(3000)
+        self.assertEqual(self.snapshot(),frozen,"A completed match must stay finished")
+
+    def spawned_ball(self, age=0, thrower_index=0, random_values=(0.99,), player_y=None):
+        return self.page.evaluate("""options => {
+            let randomIndex=0;
+            Math.random=()=>options.randomValues[Math.min(randomIndex++,options.randomValues.length-1)];
+            elapsed=total=options.age;
+            thrower=options.throwerIndex;
+            ball=null;
+            cool=0;
+            inv=1000;
+            const b=bounds();
+            p.x=b.x+b.w/2;
+            p.y=options.playerY===null ? b.y+b.h/2 : options.playerY;
+            update(0);
+            return {ball:{...ball},p:{...p},b,age:elapsed,
+                multiplier:difficultyMultiplier(),hud:$('difficulty').textContent};
+        }""", {"age": age, "throwerIndex": thrower_index,
+                 "randomValues": list(random_values), "playerY": player_y})
+
+    def test_difficulty_thresholds_change_actual_spawned_speeds_and_cap(self):
+        self.start()
+        stages=((0,1),(4.999,1),(5,1.15),(9.999,1.15),(10,1.3),
+                (14.999,1.3),(15,1.5),(19.999,1.5),(20,1.65),(300,1.65))
+        for age,expected in stages:
+            with self.subTest(age=age):
+                shot=self.spawned_ball(age=age)
+                self.assertEqual(shot["multiplier"],expected)
+                self.assertAlmostEqual(math.hypot(shot["ball"]["vx"],shot["ball"]["vy"]),290*expected)
+                self.assertEqual(shot["ball"]["speedMultiplier"],expected)
+                self.assertEqual(shot["hud"],f"SPEED {expected:.2f}×")
+        self.assertEqual(self.page.evaluate("BASE_BALL_SPEED"),290)
+
+    def test_difficulty_freezes_on_pause_and_resets_for_each_dodger(self):
+        self.start()
+        self.page.evaluate("elapsed=total=20;renderHUD()")
+        self.page.locator("#pause").click()
+        frozen=self.snapshot()
+        self.page.clock.run_for(5000)
+        self.assertEqual(self.snapshot(),frozen)
+        self.assertEqual(self.page.locator("#difficulty").inner_text(),"SPEED 1.65×")
+        self.page.locator("#start").click()
+        self.collide()
+        hit_age=self.page.evaluate("elapsed")
+        self.assertGreaterEqual(hit_age,20)
+        self.page.clock.run_for(300)
+        self.assertEqual(self.page.evaluate("elapsed"),hit_age)
+        self.page.clock.run_for(400)
+        self.assertEqual(self.page.evaluate("currentPlayer"),2)
+        self.assertLess(self.page.evaluate("elapsed"),.1)
+        self.assertEqual(self.page.evaluate("difficultyMultiplier()"),1)
+        self.assertEqual(self.page.locator("#difficulty").inner_text(),"SPEED 1.00×")
+        self.assertAlmostEqual(self.page.evaluate("playerTimes[0][0]"),hit_age)
+        self.assertGreaterEqual(self.page.evaluate("total"),hit_age)
+        self.collide(7)
+        self.page.clock.run_for(700)
+        self.assertEqual(self.page.evaluate("currentPlayer"),3)
+        self.assertEqual(self.page.evaluate("difficultyMultiplier()"),1)
+        self.collide(12)
+        self.page.clock.run_for(700)
+        self.page.locator("#start").click()
+        self.assert_fresh_round(1,2)
+        self.assertEqual(len(self.page.evaluate("playerTimes[0]")),3)
+        self.page.locator("#pause").click()
+        self.page.locator("#restart").click()
+        self.assert_fresh_match()
+
+    def test_ball_speed_changes_in_flight_at_each_player_time_threshold(self):
+        self.start()
+        for threshold,previous,current in ((5,1,1.15),(10,1.15,1.3),(15,1.3,1.5),(20,1.5,1.65)):
+            with self.subTest(threshold=threshold):
+                initial=self.spawned_ball(age=threshold-.01,random_values=(0,.999))["ball"]
+                self.assertEqual(initial["speedMultiplier"],previous)
+                after=self.page.evaluate("update(.02);({...ball})")
+                self.assertEqual(after["speedMultiplier"],current)
+                self.assertAlmostEqual(math.hypot(after["vx"],after["vy"]),290*current)
+                self.assertAlmostEqual(after["vx"]/initial["vx"],current/previous)
+                self.assertAlmostEqual(after["vy"]/initial["vy"],current/previous)
+                self.assertAlmostEqual(after["x"]-initial["x"],after["vx"]*.02)
+                self.assertAlmostEqual(after["y"]-initial["y"],after["vy"]*.02)
+                stable=self.page.evaluate("update(.01);({...ball})")
+                self.assertEqual((stable["vx"],stable["vy"]),(after["vx"],after["vy"]))
+        # Collision fixtures do not represent production throws and have no stage
+        # metadata. Their specified velocities must remain usable and finite.
+        fixture=self.page.evaluate("elapsed=4.99;inv=100;ball={x:p.x-150,y:p.y-80,vx:15,vy:5,r:11};update(.02);({...ball})")
+        self.assertEqual((fixture["vx"],fixture["vy"]),(15,5))
+
+    def test_ball_motion_is_dt_independent_with_one_ball_and_fixed_heading(self):
+        self.start()
+        outcomes=[]
+        for step,count in ((.01,20),(.02,10),(.025,8)):
+            initial=self.spawned_ball(age=6)["ball"]
+            outcome=self.page.evaluate("""options=>{
+                const original=ball,nextThrower=thrower;
+                throwBall();
+                const guarded=ball===original && thrower===nextThrower;
+                cool=-10;
+                for(let i=0;i<options.count;i++) update(options.step);
+                return {ball:{...ball},guarded,same:ball===original,elapsed,total};
+            }""",{"step":step,"count":count})
+            self.assertTrue(outcome["guarded"])
+            self.assertTrue(outcome["same"])
+            self.assertEqual((outcome["ball"]["vx"],outcome["ball"]["vy"]),(initial["vx"],initial["vy"]))
+            self.assertAlmostEqual(outcome["ball"]["x"],initial["x"]+initial["vx"]*.2)
+            self.assertAlmostEqual(outcome["ball"]["y"],initial["y"]+initial["vy"]*.2)
+            self.assertAlmostEqual(outcome["elapsed"],6.2)
+            self.assertAlmostEqual(outcome["total"],6.2)
+            outcomes.append(outcome)
+        for outcome in outcomes[1:]:
+            self.assertAlmostEqual(outcome["ball"]["x"],outcomes[0]["ball"]["x"])
+            self.assertAlmostEqual(outcome["total"],outcomes[0]["total"])
+
+    def test_throw_variation_is_bounded_straight_and_keeps_targets_on_court(self):
+        self.start()
+        court = self.page.evaluate("bounds()")
+        for thrower_index in (0, 1):
+            deviations = []
+            for samples in ((.99,), (.25,), (.249, 0), (0, 0), (0, .999)):
+                shot = self.spawned_ball(age=30, thrower_index=thrower_index, random_values=samples)
+                ball = shot["ball"]
+                direct = math.atan2(shot["p"]["y"] - ball["y"], shot["p"]["x"] - ball["x"])
+                heading = math.atan2(ball["vy"], ball["vx"])
+                deviation = math.degrees(math.atan2(math.sin(heading-direct), math.cos(heading-direct)))
+                self.assertLessEqual(abs(deviation), 8.000001)
+                self.assertAlmostEqual(math.hypot(ball["vx"], ball["vy"]), 478.5)
+                if samples[0] >= .25:
+                    self.assertAlmostEqual(deviation, 0, places=7)
+                else:
+                    self.assertGreater(abs(deviation), .01)
+                    deviations.append(deviation)
+                in_flight = self.page.evaluate("""() => {
+                    const original=ball;
+                    for(let i=0;i<20;i++) update(.01);
+                    return {same:ball===original,ball:{...ball}};
+                }""")
+                self.assertTrue(in_flight["same"])
+                self.assertEqual((in_flight["ball"]["vx"], in_flight["ball"]["vy"]), (ball["vx"], ball["vy"]))
+                self.assertAlmostEqual(in_flight["ball"]["x"], ball["x"] + ball["vx"] * .2)
+                self.assertAlmostEqual(in_flight["ball"]["y"], ball["y"] + ball["vy"] * .2)
+            self.assertLess(deviations[-2] * deviations[-1], 0,
+                            "Deterministic random extremes must vary aim to both sides")
+            for player_y in (court["y"] + 30, court["y"] + court["h"] - 30):
+                for samples in ((0, 0), (0, .999)):
+                    shot = self.spawned_ball(thrower_index=thrower_index,
+                                             random_values=samples, player_y=player_y)
+                    ball = shot["ball"]
+                    target_y = ball["y"] + (shot["p"]["x"] - ball["x"]) * ball["vy"] / ball["vx"]
+                    self.assertGreaterEqual(target_y, court["y"] + 30 - 1e-7)
+                    self.assertLessEqual(target_y, court["y"] + court["h"] - 30 + 1e-7)
+
+    def canvas_team_colors(self):
+        return self.page.evaluate("""() => {
+            draw();
+            const b=bounds();
+            const pixel=(x,y)=>Array.from(ctx.getImageData(Math.floor(x*D),Math.floor(y*D),1,1).data).slice(0,3);
+            const label=$('team'),style=getComputedStyle(label);
+            return {shirt:pixel(p.x,p.y),markers:[0,1,2].map(i=>pixel(b.x+50+i*28,b.y+b.h+12)),
+                throwers:[pixel(b.x-22,b.y+b.h/2),pixel(b.x+b.w+22,b.y+b.h/2)],
+                hudColor:style.borderLeftColor};
+        }""")
+
+    def test_two_team_colors_follow_dodging_and_throwing_roles(self):
+        self.start()
+        palette=[{"name":"Blue","color":"#0072b2"},{"name":"Red","color":"#a63636"}]
+        self.assertEqual(self.page.evaluate("TEAM_COLORS"),palette)
+        rgb_colors=([0,114,178],[166,54,54])
+        for team_index in (0,1):
+            rgb,opponent=rgb_colors[team_index],rgb_colors[1-team_index]
+            self.assertEqual(self.page.evaluate("activeTeam()"),palette[team_index])
+            self.assertEqual(self.page.evaluate("throwingTeam()"),palette[1-team_index])
+            self.page.evaluate("inv=0;renderHUD()")
+            initial=self.canvas_team_colors()
+            self.assertEqual(initial["shirt"],rgb)
+            self.assertEqual(initial["markers"],[rgb,rgb,rgb])
+            self.assertEqual(initial["throwers"],[opponent,opponent])
+            self.assertEqual(initial["hudColor"],f"rgb({rgb[0]}, {rgb[1]}, {rgb[2]})")
+            for remaining in (2,1,0):
+                self.collide()
+                self.assertEqual(self.page.evaluate("state"),"hit")
+                visible=self.canvas_team_colors()
+                self.assertEqual(visible["shirt"],rgb,"An elimination must preserve the dodging team's shirt")
+                self.assertEqual(visible["throwers"],[opponent,opponent])
+                for index,marker in enumerate(visible["markers"]):
+                    if index<remaining:self.assertEqual(marker,rgb)
+                    else:self.assertNotEqual(marker,rgb)
+                self.page.clock.run_for(700)
+                if remaining:
+                    self.page.evaluate("inv=0")
+                    replacement=self.canvas_team_colors()
+                    self.assertEqual(replacement["shirt"],rgb)
+                    self.assertEqual(replacement["throwers"],[opponent,opponent])
+                    self.assertEqual(replacement["markers"][:remaining],[rgb]*remaining)
+            self.assertEqual(self.page.evaluate("state"),"between" if team_index==0 else "finished")
+            if team_index==0:
+                self.assertEqual(self.page.evaluate("team"),0)
+                self.page.locator("#start").click()
+                self.assert_fresh_round(1,2)
+        self.page.locator("#start").click()
+        self.assert_fresh_match()
+        self.page.evaluate("inv=0")
+        restarted=self.canvas_team_colors()
+        self.assertEqual(restarted["shirt"],rgb_colors[0])
+        self.assertEqual(restarted["throwers"],[rgb_colors[1],rgb_colors[1]])
+
+    def test_mobile_player_team_score_and_difficulty_hud_fit_small_viewports(self):
+        self.open_page(mobile=True)
+        self.start()
+        for width,height in ((320,568),(360,640),(568,320)):
+            self.page.set_viewport_size({"width":width,"height":height})
+            self.page.clock.run_for(40)
+            for team_index in (0,1):
+                with self.subTest(viewport=(width,height),team=team_index):
+                    layout=self.page.evaluate("""index=>{
+                        team=index;round=index+1;currentPlayer=3;players=1;elapsed=333.3;total=999.9;renderHUD();
+                        const rect=element=>{
+                            const r=element.getBoundingClientRect();
+                            return {id:element.id,x:r.x,y:r.y,right:r.right,bottom:r.bottom,
+                                scrollWidth:element.scrollWidth,clientWidth:element.clientWidth};
+                        };
+                        return {scrollWidth:document.documentElement.scrollWidth,hud:rect($('hud')),
+                            items:['team','score','round','dash-status','difficulty','pause'].map(id=>rect($(id)))};
+                    }""",team_index)
+                    self.assertLessEqual(layout["scrollWidth"],width)
+                    for item in [layout["hud"],*layout["items"]]:
+                        self.assertGreaterEqual(item["x"],0,item["id"])
+                        self.assertGreaterEqual(item["y"],0,item["id"])
+                        self.assertLessEqual(item["right"],width,item["id"])
+                        self.assertLessEqual(item["bottom"],height,item["id"])
+                        self.assertLessEqual(item["scrollWidth"],item["clientWidth"]+1,item["id"])
+                    for index,first in enumerate(layout["items"]):
+                        for second in layout["items"][index+1:]:
+                            overlap_x=min(first["right"],second["right"])-max(first["x"],second["x"])
+                            overlap_y=min(first["bottom"],second["bottom"])-max(first["y"],second["y"])
+                            self.assertFalse(overlap_x>1 and overlap_y>1,f"HUD fields overlap: {first['id']} and {second['id']}")
+
+    def test_match_scoring_blue_win_red_win_and_display_precision_tie(self):
+        self.start()
+        pure=self.page.evaluate("""()=>{
+            const times=[.1,.2,.3],before=JSON.stringify(times);
+            return {empty:scoreTeam([]),sum:scoreTeam(times),unchanged:JSON.stringify(times)===before};
+        }""")
+        self.assertEqual(pure["empty"],0)
+        self.assertAlmostEqual(pure["sum"],.6)
+        self.assertTrue(pure["unchanged"])
+        cases=(([1.04,2.02,3.01],[.5,1.5,2.5],0),
+               ([.5,1.5,2.5],[1.04,2.02,3.01],1),
+               ([.11,.12,.11],[.1,.1,.11],None))
+        for blue,red,winner in cases:
+            with self.subTest(winner=winner):
+                self.eliminate_team(blue)
+                self.assertEqual(self.page.evaluate("playerTimes"),[blue,[]])
+                self.page.locator("#start").click()
+                self.assert_fresh_round(1,2)
+                self.eliminate_team(red)
+                result=self.page.evaluate("matchResult()")
+                for actual,expected in zip(result["scores"],(sum(blue),sum(red))):
+                    self.assertAlmostEqual(actual,expected)
+                self.assertEqual(result["winner"],winner)
+                self.assertEqual(self.page.evaluate("playerTimes"),[blue,red])
+                self.assertEqual(self.page.evaluate("playerTimes.flat().length"),6)
+                self.assertTrue(self.page.locator("#results").is_visible())
+                for label,times in (("blue",blue),("red",red)):
+                    details=self.page.locator(f"#{label}-times").inner_text()
+                    for value in times:self.assertIn(f"{value:.1f}",details)
+                    self.assertIn(f"{sum(times):.1f}",self.page.locator(f"#{label}-total").inner_text())
+                text=self.page.locator("#panel").inner_text()
+                if winner is None:self.assertIn("TIE",text.upper())
+                else:
+                    name=("BLUE","RED")[winner]
+                    self.assertRegex(text.upper(),rf"(?s)({name}.*WIN|WIN.*{name})")
+                self.assertEqual(self.page.locator("#start").inner_text(),"PLAY AGAIN")
+                self.assert_modal_focus()
+                final=self.snapshot()
+                self.page.evaluate("nextTeam();takeHit()")
+                self.page.clock.run_for(1000)
+                self.assertEqual(self.snapshot(),final,"A finished match must reject extra teams and eliminations")
+                self.page.locator("#start").click()
+                self.assert_fresh_match()
+
+    def test_finished_mobile_play_again_fully_resets_match(self):
+        self.open_page(mobile=True)
+        self.start()
+        for width,height in ((320,568),(568,320)):
+            self.page.set_viewport_size({"width":width,"height":height})
+            self.page.clock.run_for(40)
+            self.eliminate_team([.1,.2,.3])
+            self.page.locator("#start").tap()
+            self.eliminate_team([.3,.2,.1])
+            self.assertEqual(self.page.evaluate("state"),"finished")
+            self.assertTrue(self.page.locator("#results").is_visible())
+            self.assertLessEqual(self.page.evaluate("document.documentElement.scrollWidth"),width)
+            if height>=568:
+                action=self.page.locator("#start").bounding_box()
+                self.assertGreaterEqual(action["y"],0)
+                self.assertLessEqual(action["y"]+action["height"],height,
+                                     "Portrait mobile Play Again must be visible without scrolling")
+            self.page.locator("#start").scroll_into_view_if_needed()
+            self.page.locator("#start").tap()
+            self.assert_fresh_match()
 
     def touch(self, session, kind, points):
         # CDP touchEnd lists the contacts ending, not contacts still held.
